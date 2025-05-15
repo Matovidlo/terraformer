@@ -309,7 +309,7 @@ Links to download Terraform provider plugins:
     * Honeycomb.io >= 0.10.0 - [here](https://github.com/honeycombio/terraform-provider-honeycombio/releases)
     * Opal >= 0.0.2 - [here](https://github.com/opalsecurity/terraform-provider-opal/releases)
 * Community
-    * Keycloak provider >=1.19.0 - [here](https://github.com/mrparkers/terraform-provider-keycloak/)
+    * Keycloak provider >=1.19.0 - [here](https://github.com/keycloak/terraform-provider-keycloak/)
     * Logz.io provider >=1.1.1 - [here](https://github.com/jonboydell/logzio_terraform_provider/)
     * Commercetools provider >= 0.21.0 - [here](https://github.com/labd/terraform-provider-commercetools)
     * Mikrotik provider >= 0.2.2 - [here](https://github.com/ddelnano/terraform-provider-mikrotik)

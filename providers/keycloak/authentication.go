@@ -16,7 +16,7 @@ package keycloak
 
 import (
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
-	"github.com/mrparkers/terraform-provider-keycloak/keycloak"
+	"github.com/keycloak/terraform-provider-keycloak/keycloak"
 )
 
 func (g RealmGenerator) createAuthenticationFlowResources(authenticationFlows []*keycloak.AuthenticationFlow) []terraformutils.Resource {
