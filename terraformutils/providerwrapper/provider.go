@@ -18,17 +18,19 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/rpc"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/tfplugin6"
 	"github.com/hashicorp/go-cty/cty"
 	hclog "github.com/hashicorp/go-hclog"
 	plugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	tfplugin6 "github.com/hashicorp/terraform-plugin-go/tfprotov6/tfplugin6"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
+	"google.golang.org/grpc"
 )
 
 // DefaultDataDir is the default directory for storing local data.
@@ -41,6 +43,43 @@ const DefaultPluginVendorDirV12 = "terraform.d/plugins/" + pluginMachineName
 
 // pluginMachineName is the directory name used in new plugin paths.
 const pluginMachineName = runtime.GOOS + "_" + runtime.GOARCH
+
+// Handshake is the HandshakeConfig used to configure clients and servers.
+var Handshake = plugin.HandshakeConfig{
+	ProtocolVersion:  6,
+	MagicCookieKey:   "TF_PLUGIN_MAGIC_COOKIE",
+	MagicCookieValue: "d602bf8f470bc67ca7faa0386276bbdd4330efaf76d1a219cb4d6991ca9872b2",
+}
+
+// GRPCProviderPlugin is a plugin implementation for protocol v6.
+type GRPCProviderPlugin struct{}
+
+// Server is not implemented for client-side usage.
+func (p *GRPCProviderPlugin) Server(*plugin.MuxBroker) (interface{}, error) {
+	return nil, fmt.Errorf("terraform-plugin client only implements gRPC clients")
+}
+
+// Client is not implemented for client-side usage.
+func (p *GRPCProviderPlugin) Client(*plugin.MuxBroker, *rpc.Client) (interface{}, error) {
+	return nil, fmt.Errorf("terraform-plugin client only implements gRPC clients")
+}
+
+// GRPCServer is not implemented for client-side usage.
+func (p *GRPCProviderPlugin) GRPCServer(*plugin.GRPCBroker, *grpc.Server) error {
+	return fmt.Errorf("terraform-plugin client only implements gRPC clients")
+}
+
+// GRPCClient returns the gRPC client for the provider.
+func (p *GRPCProviderPlugin) GRPCClient(ctx context.Context, broker *plugin.GRPCBroker, conn *grpc.ClientConn) (interface{}, error) {
+	return tfplugin6.NewProviderClient(conn), nil
+}
+
+// VersionedPlugins is the map of plugins for protocol negotiation.
+var VersionedPlugins = map[int]plugin.PluginSet{
+	6: {
+		"provider": &GRPCProviderPlugin{},
+	},
+}
 
 type ProviderWrapper struct {
 	ProviderClient tfplugin6.ProviderClient
@@ -87,18 +126,24 @@ func (p *ProviderWrapper) GetSchema() *tfprotov6.Schema {
 			log.Println("[ERROR] ProviderWrapper: ProviderClient is nil in GetSchema")
 			return nil
 		}
-		resp, err := p.ProviderClient.GetSchema(context.Background(), &tfprotov6.GetSchemaRequest{})
+		// Call GetProviderSchema from tfplugin6 (gRPC) and convert to tfprotov6
+		grpcResp, err := p.ProviderClient.GetProviderSchema(context.Background(), &tfplugin6.GetProviderSchema_Request{})
 		if err != nil {
-			log.Printf("[ERROR] ProviderWrapper: GetSchema RPC call failed: %v\n", err)
+			log.Printf("[ERROR] ProviderWrapper: GetProviderSchema RPC call failed: %v\n", err)
 			return nil
 		}
-		if resp.Diagnostics != nil && len(resp.Diagnostics) > 0 {
-			for _, diag := range resp.Diagnostics {
-				log.Printf("[ERROR] ProviderWrapper: Diagnostics from GetSchema: %s: %s\n", diag.Summary, diag.Detail)
+		if grpcResp.Diagnostics != nil && len(grpcResp.Diagnostics) > 0 {
+			for _, diag := range grpcResp.Diagnostics {
+				log.Printf("[ERROR] ProviderWrapper: Diagnostics from GetProviderSchema: %s: %s\n", diag.Summary, diag.Detail)
 			}
 		}
-		log.Printf("[DEBUG] ProviderWrapper: GetSchema successful. Provider schema: %+v\n", resp.Provider)
-		p.schemaV6 = resp.Provider
+		// TODO: Convert from tfplugin6.Schema to tfprotov6.Schema
+		// For now, store the gRPC schema and adapt later
+		log.Printf("[DEBUG] ProviderWrapper: GetProviderSchema successful. Provider schema: %+v\n", grpcResp.Provider)
+		// We need to convert grpcResp.Provider (tfplugin6 schema) to tfprotov6.Schema
+		// This requires using the fromproto package which is also internal
+		// For now, we'll need to work with tfplugin6 types directly
+		p.schemaV6 = nil // TODO: Fix this conversion
 	}
 	return p.schemaV6
 }
