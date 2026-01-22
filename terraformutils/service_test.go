@@ -3,8 +3,6 @@ package terraformutils
 import (
 	"reflect"
 	"testing"
-
-	"github.com/hashicorp/terraform/terraform"
 )
 
 func TestEmptyFiltersParsing(t *testing.T) {
@@ -61,16 +59,16 @@ func TestEdgeIdFiltersParsing(t *testing.T) {
 func TestServiceIdCleanupWithFilter(t *testing.T) {
 	service := Service{
 		Resources: []Resource{{
-			InstanceInfo: &terraform.InstanceInfo{
+			InstanceInfo: &InstanceInfo{
 				Type: "type1",
 			},
-			InstanceState: &terraform.InstanceState{
+			InstanceState: &InstanceState{
 				ID: "myid",
 			}}, {
-			InstanceInfo: &terraform.InstanceInfo{
+			InstanceInfo: &InstanceInfo{
 				Type: "type2",
 			},
-			InstanceState: &terraform.InstanceState{
+			InstanceState: &InstanceState{
 				ID: "myid",
 			}}},
 	}
@@ -86,18 +84,18 @@ func TestServiceAttributeCleanupWithFilter(t *testing.T) {
 	service := Service{
 		Resources: []Resource{
 			{
-				InstanceInfo: &terraform.InstanceInfo{
+				InstanceInfo: &InstanceInfo{
 					Type: "aws_vpc",
 				},
-				InstanceState: &terraform.InstanceState{
+				InstanceState: &InstanceState{
 					ID: "vpc1",
 				},
 				Item: mapI("tags", mapI("Name", "some"))},
 			{
-				InstanceInfo: &terraform.InstanceInfo{
+				InstanceInfo: &InstanceInfo{
 					Type: "aws_vpc",
 				},
-				InstanceState: &terraform.InstanceState{
+				InstanceState: &InstanceState{
 					ID: "vpc2",
 				},
 				Item: mapI("tags", mapI("Name", "default"))}},
@@ -114,18 +112,18 @@ func TestServiceAttributeNameOnlyCleanupWithFilter(t *testing.T) {
 	service := Service{
 		Resources: []Resource{
 			{
-				InstanceInfo: &terraform.InstanceInfo{
+				InstanceInfo: &InstanceInfo{
 					Type: "aws_vpc",
 				},
-				InstanceState: &terraform.InstanceState{
+				InstanceState: &InstanceState{
 					ID: "vpc1",
 				},
 				Item: mapI("tags", mapI("Abc", nil))},
 			{
-				InstanceInfo: &terraform.InstanceInfo{
+				InstanceInfo: &InstanceInfo{
 					Type: "aws_vpc",
 				},
-				InstanceState: &terraform.InstanceState{
+				InstanceState: &InstanceState{
 					ID: "vpc2",
 				},
 				Item: mapI("tags", mapI("Name", "default"))}},

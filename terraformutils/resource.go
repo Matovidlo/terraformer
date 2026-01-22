@@ -22,14 +22,13 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper"
-	"github.com/hashicorp/terraform/terraform"
 	"github.com/zclconf/go-cty/cty"
 )
 
 type Resource struct {
-	InstanceInfo      *terraform.InstanceInfo
-	InstanceState     *terraform.InstanceState
-	Outputs           map[string]*terraform.OutputState `json:",omitempty"`
+	InstanceInfo      *InstanceInfo
+	InstanceState     *InstanceState
+	Outputs           map[string]*OutputState `json:",omitempty"`
 	ResourceName      string
 	Provider          string
 	Item              map[string]interface{} `json:",omitempty"`
@@ -97,11 +96,11 @@ func NewResource(id, resourceName, resourceType, provider string,
 		ResourceName: TfSanitize(resourceName),
 		Item:         nil,
 		Provider:     provider,
-		InstanceState: &terraform.InstanceState{
+		InstanceState: &InstanceState{
 			ID:         id,
 			Attributes: attributes,
 		},
-		InstanceInfo: &terraform.InstanceInfo{
+		InstanceInfo: &InstanceInfo{
 			Type: resourceType,
 			Id:   fmt.Sprintf("%s.%s", resourceType, TfSanitize(resourceName)),
 		},
@@ -123,14 +122,69 @@ func NewSimpleResource(id, resourceName, resourceType, provider string, allowEmp
 }
 
 func (r *Resource) Refresh(provider *providerwrapper.ProviderWrapper) {
-	var err error
 	if r.SlowQueryRequired {
 		time.Sleep(200 * time.Millisecond)
 	}
-	r.InstanceState, err = provider.Refresh(r.InstanceInfo, r.InstanceState)
+
+	// Convert InstanceState attributes to cty.Value for the provider
+	priorState, err := attributesToCtyValue(r.InstanceState.Attributes)
+	if err != nil {
+		log.Printf("Error converting attributes to cty.Value: %v", err)
+		return
+	}
+
+	// Call provider Refresh
+	newState, err := provider.Refresh(r.InstanceInfo.Type, r.InstanceState.ID, priorState, 0)
 	if err != nil {
 		log.Println(err)
+		return
 	}
+
+	// Convert cty.Value back to attributes map
+	newAttrs, err := ctyValueToAttributes(newState)
+	if err != nil {
+		log.Printf("Error converting cty.Value to attributes: %v", err)
+		return
+	}
+
+	r.InstanceState.Attributes = newAttrs
+}
+
+// attributesToCtyValue converts a flat map[string]string to a cty.Value
+func attributesToCtyValue(attrs map[string]string) (cty.Value, error) {
+	if attrs == nil {
+		return cty.ObjectVal(map[string]cty.Value{}), nil
+	}
+
+	// Convert map[string]string to map[string]cty.Value
+	values := make(map[string]cty.Value)
+	for k, v := range attrs {
+		values[k] = cty.StringVal(v)
+	}
+
+	return cty.ObjectVal(values), nil
+}
+
+// ctyValueToAttributes converts a cty.Value to a flat map[string]string
+func ctyValueToAttributes(val cty.Value) (map[string]string, error) {
+	if val.IsNull() {
+		return map[string]string{}, nil
+	}
+
+	attrs := make(map[string]string)
+	if val.Type().IsObjectType() {
+		for key := range val.Type().AttributeTypes() {
+			attrVal := val.GetAttr(key)
+			if !attrVal.IsNull() && attrVal.Type() == cty.String {
+				attrs[key] = attrVal.AsString()
+			} else if !attrVal.IsNull() {
+				// For non-string types, convert to Go value and stringify
+				attrs[key] = fmt.Sprintf("%v", attrVal)
+			}
+		}
+	}
+
+	return attrs, nil
 }
 
 func (r Resource) GetIDKey() string {
@@ -171,8 +225,10 @@ func (r *Resource) ConvertTFstate(provider *providerwrapper.ProviderWrapper) err
 		}
 	}
 	parser := NewFlatmapParser(r.InstanceState.Attributes, ignoreKeys, allowEmptyValues)
-	schema := provider.GetSchema()
-	impliedType := schema.ResourceTypes[r.InstanceInfo.Type].Block.ImpliedType()
+	impliedType, err := provider.GetResourceImpliedType(r.InstanceInfo.Type)
+	if err != nil {
+		return err
+	}
 	return r.ParseTFstate(parser, impliedType)
 }
 

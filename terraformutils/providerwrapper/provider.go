@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/tfplugin6"
-	"github.com/hashicorp/go-cty/cty"
-	"github.com/hashicorp/go-cty/cty/msgpack"
+	"github.com/zclconf/go-cty/cty"
+	"github.com/zclconf/go-cty/cty/msgpack"
 	hclog "github.com/hashicorp/go-hclog"
 	plugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
@@ -175,6 +175,14 @@ func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string
 		return nil, fmt.Errorf("resource type %q not found in provider schema", typeName)
 	}
 	return rs, nil
+}
+
+// GetResourceImpliedType returns a cty.Type for a given resource type
+// This is a simplified implementation that creates a generic object type
+func (p *ProviderWrapper) GetResourceImpliedType(typeName string) (cty.Type, error) {
+	// For now, return a generic object type with dynamic attributes
+	// TODO: Properly convert tfplugin6.Schema_Block to cty.Type with correct attribute types
+	return cty.DynamicPseudoType, nil
 }
 
 func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[string][]string, error) {

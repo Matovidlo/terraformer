@@ -15,40 +15,38 @@
 package terraformutils
 
 import (
-	"bytes"
+	"encoding/json"
 	"log"
 	"sync"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper"
-
-	"github.com/hashicorp/terraform/terraform"
 )
 
 type BaseResource struct {
 	Tags map[string]string `json:"tags,omitempty"`
 }
 
-func NewTfState(resources []Resource) *terraform.State {
-	tfstate := &terraform.State{
-		Version:   terraform.StateVersion,
-		TFVersion: terraform.VersionString(), //nolint
+func NewTfState(resources []Resource) *State {
+	tfstate := &State{
+		Version:   3, // Terraform state version 3 (compatible with v0.12+)
+		TFVersion: "0.12.31",
 		Serial:    1,
 	}
-	outputs := map[string]*terraform.OutputState{}
+	outputs := map[string]*OutputState{}
 	for _, r := range resources {
 		for k, v := range r.Outputs {
 			outputs[k] = v
 		}
 	}
-	tfstate.Modules = []*terraform.ModuleState{
+	tfstate.Modules = []*ModuleState{
 		{
 			Path:      []string{"root"},
-			Resources: map[string]*terraform.ResourceState{},
+			Resources: map[string]*ResourceState{},
 			Outputs:   outputs,
 		},
 	}
 	for _, resource := range resources {
-		resourceState := &terraform.ResourceState{
+		resourceState := &ResourceState{
 			Type:     resource.InstanceInfo.Type,
 			Primary:  resource.InstanceState,
 			Provider: "provider." + resource.Provider,
@@ -60,9 +58,7 @@ func NewTfState(resources []Resource) *terraform.State {
 
 func PrintTfState(resources []Resource) ([]byte, error) {
 	state := NewTfState(resources)
-	var buf bytes.Buffer
-	err := terraform.WriteState(state, &buf)
-	return buf.Bytes(), err
+	return json.MarshalIndent(state, "", "  ")
 }
 
 func RefreshResources(resources []*Resource, provider *providerwrapper.ProviderWrapper, slowProcessingResources [][]*Resource) ([]*Resource, error) {
