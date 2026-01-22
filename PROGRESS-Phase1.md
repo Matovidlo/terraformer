@@ -139,7 +139,34 @@ Need to decide between:
 - Can test both in parallel
 - Estimated: Full rewrite
 
-**Checkpoint**: Commit `fb9a3d76` - Vendored tfplugin6 and fromproto, facing type system conflicts
+**Decision**: Chose **Option B** (Hybrid Approach) ✅
+
+### Hybrid Implementation Complete! ✅
+
+**Checkpoint**: Commit `16245a34` - Provider wrapper now compiles successfully!
+
+**What Was Done**:
+1. ✅ Implemented cty.Value ↔ tfplugin6.DynamicValue conversion helpers using msgpack
+2. ✅ Rewrote Refresh() method to use gRPC types (tfplugin6.*) internally
+3. ✅ Updated GetResourceSchema() to work with gRPC schema response
+4. ✅ Fixed initProvider() to use local Handshake/VersionedPlugins
+5. ✅ Changed ProviderWrapper struct to cache gRPC response
+6. ✅ Added helper functions: interfaceToCtyValue, unmarshalJSONToCty
+7. ✅ Provider wrapper package compiles without errors!
+
+**Key Implementation Details**:
+- Used `github.com/hashicorp/go-cty/cty/msgpack` for efficient serialization
+- Keep tfplugin6 (gRPC) types internal to provider wrapper
+- Convert to/from cty.Value at API boundaries
+- Preserved backward compatibility where possible
+
+**Files Modified**:
+- `terraformutils/providerwrapper/provider.go` - Complete rewrite of core methods (~250 line changes)
+- `go.mod` / `go.sum` - Added msgpack dependency
+
+**Previous Checkpoints**:
+- Commit `3412453b` - Vendored fromproto package
+- Commit `fb9a3d76` - Vendored tfplugin6 and fromproto, facing type system conflicts
 
 ---
 
