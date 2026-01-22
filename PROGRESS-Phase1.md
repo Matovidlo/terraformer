@@ -47,10 +47,50 @@ HashiCorp intends for consumers to vendor/copy this code.
 - `terraformutils/providerwrapper/provider.go` - Updated imports and added plugin config
 - `terraformutils/providerwrapper/internal/tfplugin6/` - New vendored package (3 files)
 
-### Next Steps
-1. Test if provider wrapper compiles now
-2. Update method signatures to use proper gRPC types
-3. Handle conversion between tfplugin6 (gRPC) and tfprotov6 (public API) types
+### Current Challenge: Type Conversion Complexity
+
+After vendoring tfplugin6, we hit a major issue: the provider wrapper uses **two different type systems**:
+1. **tfplugin6** types (gRPC protocol buffers - what we get from provider plugins)
+2. **tfprotov6** types (public Go API - what the rest of terraformer uses)
+
+These types need conversion between them. HashiCorp provides conversion in `tfprotov6/internal/fromproto`, but that's also internal.
+
+**Compilation Errors** (10+ errors):
+- Type mismatches: `tfplugin6.ProviderClient` vs `tfprotov6` types
+- Missing methods: `GetSchema` vs `GetProviderSchema`
+- `cty.Value` vs `tftypes.Value` conversion issues
+- `tfplugin6.DynamicValue` vs `tfprotov6.DynamicValue` mismatches
+
+### Options Going Forward
+
+**Option A: Vendor fromproto Package Too** (Complex but complete)
+- Copy all files from `tfprotov6/internal/fromproto/` (13 non-test files)
+- Get full conversion capability between gRPC and public API
+- Most correct approach, but ~2000+ lines of code to vendor
+- Risk: May have dependencies on other internal packages
+
+**Option B: Write Minimal Conversion Helpers** (Moderate complexity)
+- Write only the specific conversions we need
+- Smaller code footprint
+- Risk: May miss edge cases that HashiCorp's code handles
+
+**Option C: Rework to Use tfplugin6 Throughout** (Major refactor)
+- Stop using tfprotov6 types entirely
+- Work directly with gRPC types in provider wrapper
+- Would require changing multiple files that use ProviderWrapper
+- Affects: resource.go, utils.go, service.go, and 6 other files
+
+**Option D: Use terraform-exec Instead** (Different approach)
+- Instead of loading providers directly, use terraform-exec library
+- Call `terraform import` commands
+- Simpler but different architecture
+
+### Recommendation
+I recommend **Option A** (vendor fromproto) because:
+1. It's what HashiCorp intends (they say "copy this into your codebase")
+2. Least risk of bugs from incorrect conversions
+3. Preserves existing architecture
+4. One-time effort
 
 ---
 
