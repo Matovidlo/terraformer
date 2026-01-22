@@ -16,6 +16,7 @@ package providerwrapper //nolint
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/rpc"
@@ -24,13 +25,12 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/fromproto"
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/tfplugin6"
 	"github.com/hashicorp/go-cty/cty"
+	"github.com/hashicorp/go-cty/cty/msgpack"
 	hclog "github.com/hashicorp/go-hclog"
 	plugin "github.com/hashicorp/go-plugin"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
-	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"google.golang.org/grpc"
 )
 
@@ -83,14 +83,14 @@ var VersionedPlugins = map[int]plugin.PluginSet{
 }
 
 type ProviderWrapper struct {
-	ProviderClient tfplugin6.ProviderClient
-	client         *plugin.Client
-	rpcClient      plugin.ClientProtocol
-	providerName   string
-	config         cty.Value
-	schemaV6       *tfprotov6.Schema
-	retryCount     int
-	retrySleepMs   int
+	ProviderClient     tfplugin6.ProviderClient
+	client             *plugin.Client
+	rpcClient          plugin.ClientProtocol
+	providerName       string
+	config             cty.Value
+	cachedSchemaResp   *tfplugin6.GetProviderSchema_Response // Store gRPC response
+	retryCount         int
+	retrySleepMs       int
 }
 
 func NewProviderWrapper(providerName string, providerConfig cty.Value, verbose bool, options ...map[string]int) (*ProviderWrapper, error) {
@@ -120,40 +120,56 @@ func (p *ProviderWrapper) Kill() {
 	}
 }
 
-func (p *ProviderWrapper) GetSchema() *tfprotov6.Schema {
-	if p.schemaV6 == nil {
-		log.Println("[DEBUG] ProviderWrapper: GetSchema called, schemaV6 is nil. Fetching from provider.")
+// getProviderSchemaResponse fetches and caches the provider schema (gRPC response)
+func (p *ProviderWrapper) getProviderSchemaResponse() (*tfplugin6.GetProviderSchema_Response, error) {
+	if p.cachedSchemaResp == nil {
+		log.Println("[DEBUG] ProviderWrapper: Fetching provider schema from provider")
 		if p.ProviderClient == nil {
-			log.Println("[ERROR] ProviderWrapper: ProviderClient is nil in GetSchema")
-			return nil
+			return nil, fmt.Errorf("ProviderClient is nil")
 		}
-		// Call GetProviderSchema from tfplugin6 (gRPC) and convert to tfprotov6
-		grpcResp, err := p.ProviderClient.GetProviderSchema(context.Background(), &tfplugin6.GetProviderSchema_Request{})
+
+		resp, err := p.ProviderClient.GetProviderSchema(context.Background(), &tfplugin6.GetProviderSchema_Request{})
 		if err != nil {
-			log.Printf("[ERROR] ProviderWrapper: GetProviderSchema RPC call failed: %v\n", err)
-			return nil
+			return nil, fmt.Errorf("GetProviderSchema RPC call failed: %w", err)
 		}
-		if grpcResp.Diagnostics != nil && len(grpcResp.Diagnostics) > 0 {
-			for _, diag := range grpcResp.Diagnostics {
-				log.Printf("[ERROR] ProviderWrapper: Diagnostics from GetProviderSchema: %s: %s\n", diag.Summary, diag.Detail)
+
+		if resp.Diagnostics != nil && len(resp.Diagnostics) > 0 {
+			for _, diag := range resp.Diagnostics {
+				log.Printf("[WARN] ProviderWrapper: Diagnostic from GetProviderSchema: %s: %s\n", diag.Summary, diag.Detail)
 			}
 		}
-		// TODO: Convert from tfplugin6.Schema to tfprotov6.Schema
-		// For now, store the gRPC schema and adapt later
-		log.Printf("[DEBUG] ProviderWrapper: GetProviderSchema successful. Provider schema: %+v\n", grpcResp.Provider)
-		// We need to convert grpcResp.Provider (tfplugin6 schema) to tfprotov6.Schema
-		// This requires using the fromproto package which is also internal
-		// For now, we'll need to work with tfplugin6 types directly
-		p.schemaV6 = nil // TODO: Fix this conversion
+
+		p.cachedSchemaResp = resp
+		log.Println("[DEBUG] ProviderWrapper: Provider schema cached successfully")
 	}
-	return p.schemaV6
+	return p.cachedSchemaResp, nil
 }
 
-func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string) (*tfprotov6.Schema, error) {
-	resp, err := p.ProviderClient.GetSchema(ctx, &tfprotov6.GetSchemaRequest{})
+// GetSchema returns the provider schema (for backward compatibility)
+// Deprecated: Use getProviderSchemaResponse for new code
+func (p *ProviderWrapper) GetSchema() *tfprotov6.Schema {
+	resp, err := p.getProviderSchemaResponse()
 	if err != nil {
-		return nil, fmt.Errorf("get schema rpc: %w", err)
+		log.Printf("[ERROR] ProviderWrapper: GetSchema failed: %v\n", err)
+		return nil
 	}
+	if resp.Provider == nil {
+		return nil
+	}
+	// Convert tfplugin6.Schema to tfprotov6.Schema using fromproto
+	// Note: fromproto doesn't have Schema conversion, we'll need to handle this differently
+	// For now, return nil and handle at the call sites
+	log.Println("[WARN] GetSchema: Schema conversion not yet implemented, returning nil")
+	return nil
+}
+
+// GetResourceSchema returns the schema for a specific resource type (gRPC version)
+func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string) (*tfplugin6.Schema, error) {
+	resp, err := p.getProviderSchemaResponse()
+	if err != nil {
+		return nil, fmt.Errorf("get schema: %w", err)
+	}
+
 	rs, ok := resp.ResourceSchemas[typeName]
 	if !ok {
 		return nil, fmt.Errorf("resource type %q not found in provider schema", typeName)
@@ -162,7 +178,6 @@ func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string
 }
 
 func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[string][]string, error) {
-	log.Println("TODO: Rewrite GetReadOnlyAttributes for tfprotov6.Schema")
 	readOnlyAttributes := make(map[string][]string)
 
 	for _, resourceName := range resourceTypes {
@@ -177,13 +192,14 @@ func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[str
 		}
 
 		currentReadOnly := []string{"^id$"}
-		currentReadOnly = p.readBlocksV6(schema.Block, currentReadOnly, "")
+		currentReadOnly = p.readBlocksV6Grpc(schema.Block, currentReadOnly, "")
 		readOnlyAttributes[resourceName] = currentReadOnly
 	}
 	return readOnlyAttributes, nil
 }
 
-func (p *ProviderWrapper) readBlocksV6(block *tfprotov6.Block, readOnlyAttrs []string, parentPath string) []string {
+// readBlocksV6Grpc reads blocks from gRPC schema (tfplugin6.Schema_Block)
+func (p *ProviderWrapper) readBlocksV6Grpc(block *tfplugin6.Schema_Block, readOnlyAttrs []string, parentPath string) []string {
 	if block == nil {
 		return readOnlyAttrs
 	}
@@ -201,7 +217,7 @@ func (p *ProviderWrapper) readBlocksV6(block *tfprotov6.Block, readOnlyAttrs []s
 		if parentPath != "" {
 			newParentPath = parentPath + "." + nestedBlock.TypeName
 		}
-		readOnlyAttrs = p.readBlocksV6(nestedBlock.Block, readOnlyAttrs, newParentPath)
+		readOnlyAttrs = p.readBlocksV6Grpc(nestedBlock.Block, readOnlyAttrs, newParentPath)
 	}
 	return readOnlyAttrs
 }
@@ -210,13 +226,103 @@ func regexpEscape(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), `.`, `\.`)
 }
 
-func (p *ProviderWrapper) Refresh(infoType string, currentId string, priorStateCty cty.Value, version int64) (cty.Value, error) {
-	log.Println("TODO: Rewrite Refresh for tfprotov6")
-
-	req := &tfprotov6.ReadResourceRequest{
-		TypeName: infoType,
+// ctyValueToDynamicValue converts a cty.Value to a tfplugin6.DynamicValue using msgpack
+func ctyValueToDynamicValue(val cty.Value, ty cty.Type) (*tfplugin6.DynamicValue, error) {
+	if val.IsNull() {
+		return &tfplugin6.DynamicValue{}, nil
 	}
 
+	// Encode as msgpack
+	msgpackBytes, err := msgpack.Marshal(val, ty)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal cty.Value to msgpack: %w", err)
+	}
+
+	return &tfplugin6.DynamicValue{
+		Msgpack: msgpackBytes,
+	}, nil
+}
+
+// dynamicValueToCtyValue converts a tfplugin6.DynamicValue to a cty.Value
+func dynamicValueToCtyValue(dv *tfplugin6.DynamicValue, ty cty.Type) (cty.Value, error) {
+	if dv == nil || (len(dv.Msgpack) == 0 && len(dv.Json) == 0) {
+		return cty.NullVal(ty), nil
+	}
+
+	// Prefer msgpack, fall back to JSON
+	if len(dv.Msgpack) > 0 {
+		val, err := msgpack.Unmarshal(dv.Msgpack, ty)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("failed to unmarshal msgpack to cty.Value: %w", err)
+		}
+		return val, nil
+	}
+
+	if len(dv.Json) > 0 {
+		// Use cty's JSON unmarshaling
+		val, err := unmarshalJSONToCty(dv.Json, ty)
+		if err != nil {
+			return cty.NilVal, fmt.Errorf("failed to unmarshal JSON to cty.Value: %w", err)
+		}
+		return val, nil
+	}
+
+	return cty.NullVal(ty), nil
+}
+
+// unmarshalJSONToCty is a helper to unmarshal JSON bytes to cty.Value
+func unmarshalJSONToCty(data []byte, ty cty.Type) (cty.Value, error) {
+	// For dynamic type, we need to infer the type from JSON
+	if ty == cty.DynamicPseudoType {
+		// Parse as generic interface and convert
+		var raw interface{}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return cty.NilVal, err
+		}
+		// Convert interface{} to cty.Value (simplified - may need more robust conversion)
+		return interfaceToCtyValue(raw), nil
+	}
+
+	// For known types, use msgpack library's JSON support if available
+	// For now, return an error as we need the schema to properly unmarshal
+	return cty.NilVal, fmt.Errorf("JSON unmarshaling with known type not yet implemented")
+}
+
+// interfaceToCtyValue converts a generic interface{} from JSON to cty.Value
+func interfaceToCtyValue(val interface{}) cty.Value {
+	if val == nil {
+		return cty.NullVal(cty.DynamicPseudoType)
+	}
+
+	switch v := val.(type) {
+	case string:
+		return cty.StringVal(v)
+	case float64:
+		return cty.NumberFloatVal(v)
+	case bool:
+		return cty.BoolVal(v)
+	case map[string]interface{}:
+		attrs := make(map[string]cty.Value)
+		for k, attrVal := range v {
+			attrs[k] = interfaceToCtyValue(attrVal)
+		}
+		return cty.ObjectVal(attrs)
+	case []interface{}:
+		vals := make([]cty.Value, len(v))
+		for i, elemVal := range v {
+			vals[i] = interfaceToCtyValue(elemVal)
+		}
+		return cty.TupleVal(vals)
+	default:
+		return cty.NullVal(cty.DynamicPseudoType)
+	}
+}
+
+// Refresh reads the current state of a resource from the provider
+func (p *ProviderWrapper) Refresh(infoType string, currentId string, priorStateCty cty.Value, version int64) (cty.Value, error) {
+	log.Printf("[DEBUG] ProviderWrapper: Refreshing resource %s with ID %s", infoType, currentId)
+
+	// Get resource schema
 	resourceSchema, err := p.GetResourceSchema(context.Background(), infoType)
 	if err != nil {
 		return cty.NilVal, fmt.Errorf("failed to get resource schema for %s: %w", infoType, err)
@@ -225,98 +331,110 @@ func (p *ProviderWrapper) Refresh(infoType string, currentId string, priorStateC
 		return cty.NilVal, fmt.Errorf("nil schema or block for resource type %s", infoType)
 	}
 
-	var currentDynamicValue *tfprotov6.DynamicValue
+	// Prepare gRPC request
+	req := &tfplugin6.ReadResource_Request{
+		TypeName: infoType,
+	}
+
+	// Convert prior state to DynamicValue if provided
 	if !priorStateCty.IsNull() && priorStateCty.IsKnown() {
-		if priorStateCty.Type().IsObjectType() {
-			currentDynamicValue, err = tfprotov6.NewDynamicValue(priorStateCty.Type(), priorStateCty)
-			if err != nil {
-				log.Printf("[WARN] Failed to convert priorState cty.Value to DynamicValue for %s: %v. Proceeding with nil CurrentState.", infoType, err)
-			} else {
-				req.CurrentState = currentDynamicValue
-			}
+		currentDV, err := ctyValueToDynamicValue(priorStateCty, priorStateCty.Type())
+		if err != nil {
+			log.Printf("[WARN] Failed to convert priorState for %s: %v. Proceeding without CurrentState.", infoType, err)
 		} else {
-			log.Printf("[WARN] priorStateCty is not an object type for %s. Proceeding with nil CurrentState.", infoType)
+			req.CurrentState = currentDV
 		}
 	}
 
+	// Call gRPC ReadResource
 	resp, err := p.ProviderClient.ReadResource(context.Background(), req)
 	if err != nil {
 		return cty.NilVal, fmt.Errorf("ReadResource RPC call failed for %s with ID %s: %w", infoType, currentId, err)
 	}
 
+	// Handle diagnostics
 	if resp.Diagnostics != nil && len(resp.Diagnostics) > 0 {
 		var errs []string
+		hasError := false
 		for _, diag := range resp.Diagnostics {
 			errs = append(errs, fmt.Sprintf("%s: %s", diag.Summary, diag.Detail))
-			if diag.Severity == tfprotov6.DiagnosticSeverityError {
-				log.Printf("ReadResource failed for %s ID %s, attempting import: %s", infoType, currentId, diag.Summary)
-				return p.importResourceStateByID(infoType, currentId, resourceSchema)
+			if diag.Severity == tfplugin6.Diagnostic_ERROR {
+				hasError = true
 			}
 		}
-		if resp.NewState == nil || resp.NewState.Msgpack == nil {
-			log.Printf("ReadResource for %s ID %s returned diagnostics and null/empty NewState. Assuming resource is gone or unreadable. Diagnostics: %s", infoType, currentId, strings.Join(errs, "; "))
-			return cty.NilVal, fmt.Errorf("resource %s ID %s not found or unreadable after Read attempt. Diagnostics: %s", infoType, currentId, strings.Join(errs, "; "))
+		if hasError {
+			log.Printf("[ERROR] ReadResource failed for %s ID %s: %v. Attempting import fallback.", infoType, currentId, errs)
+			return p.importResourceStateByID(infoType, currentId, resourceSchema)
 		}
-		log.Printf("[WARN] ReadResource for %s ID %s returned diagnostics: %s", infoType, currentId, strings.Join(errs, "; "))
+		log.Printf("[WARN] ReadResource for %s ID %s returned warnings: %v", infoType, currentId, errs)
 	}
 
-	if resp.NewState == nil || resp.NewState.Msgpack == nil {
-		log.Printf("ReadResource for %s ID %s returned no state (resource likely deleted or doesn't exist)", infoType, currentId)
-		return cty.NilVal, nil
+	// Check if resource was deleted
+	if resp.NewState == nil || (len(resp.NewState.Msgpack) == 0 && len(resp.NewState.Json) == 0) {
+		log.Printf("[INFO] ReadResource for %s ID %s returned no state (resource likely deleted)", infoType, currentId)
+		return cty.NullVal(cty.DynamicPseudoType), nil
 	}
 
-	ctyVal, err := resp.NewState.UnmarshalToCTYValue(cty.DynamicPseudoType)
+	// Convert response state back to cty.Value
+	ctyVal, err := dynamicValueToCtyValue(resp.NewState, cty.DynamicPseudoType)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("failed to unmarshal NewState DynamicValue to cty.Value for %s: %w", infoType, err)
-	}
-	if !ctyVal.Type().IsObjectType() {
-		log.Printf("[WARN] ReadResource for %s ID %s NewState unmarshalled to non-object cty.Type: %s. This might be an issue.", infoType, currentId, ctyVal.Type().FriendlyName())
+		return cty.NilVal, fmt.Errorf("failed to unmarshal NewState for %s: %w", infoType, err)
 	}
 
+	log.Printf("[DEBUG] ProviderWrapper: Successfully refreshed resource %s ID %s", infoType, currentId)
 	return ctyVal, nil
 }
 
-func (p *ProviderWrapper) importResourceStateByID(typeName string, id string, resourceSchema *tfprotov6.Schema) (cty.Value, error) {
-	log.Printf("Attempting ImportResourceState for %s with ID %s", typeName, id)
+// importResourceStateByID attempts to import a resource by ID as a fallback
+func (p *ProviderWrapper) importResourceStateByID(typeName string, id string, resourceSchema *tfplugin6.Schema) (cty.Value, error) {
+	log.Printf("[DEBUG] ProviderWrapper: Attempting ImportResourceState for %s with ID %s", typeName, id)
 
-	idVal := cty.StringVal(id)
-	idAttrType := tftypes.String
-	objType := tftypes.Object{AttributeTypes: map[string]tftypes.Type{"id": idAttrType}}
-
-	idOnlyStateVal := cty.ObjectVal(map[string]cty.Value{"id": idVal})
-
-	dynamicIDState, err := tfprotov6.NewDynamicValue(objType, idOnlyStateVal)
+	// Create a simple state with just the ID
+	idOnlyStateVal := cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal(id)})
+	idOnlyStateDV, err := ctyValueToDynamicValue(idOnlyStateVal, idOnlyStateVal.Type())
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("failed to create DynamicValue for ID-only state for %s: %w", typeName, err)
+		return cty.NilVal, fmt.Errorf("failed to create ID-only state for %s: %w", typeName, err)
 	}
 
-	importReadReq := &tfprotov6.ReadResourceRequest{
+	// Try ReadResource with ID-only state
+	req := &tfplugin6.ReadResource_Request{
 		TypeName:     typeName,
-		CurrentState: dynamicIDState,
+		CurrentState: idOnlyStateDV,
 	}
 
-	resp, err := p.ProviderClient.ReadResource(context.Background(), importReadReq)
+	resp, err := p.ProviderClient.ReadResource(context.Background(), req)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("fallback ReadResource (import) RPC call failed for %s ID %s: %w", typeName, id, err)
+		return cty.NilVal, fmt.Errorf("import fallback ReadResource failed for %s ID %s: %w", typeName, id, err)
 	}
+
+	// Check for errors in diagnostics
 	if resp.Diagnostics != nil && len(resp.Diagnostics) > 0 {
 		var errs []string
+		hasError := false
 		for _, diag := range resp.Diagnostics {
 			errs = append(errs, fmt.Sprintf("%s: %s", diag.Summary, diag.Detail))
-			if diag.Severity == tfprotov6.DiagnosticSeverityError {
-				return cty.NilVal, fmt.Errorf("fallback ReadResource (import) for %s ID %s failed with errors: %s", typeName, id, strings.Join(errs, "; "))
+			if diag.Severity == tfplugin6.Diagnostic_ERROR {
+				hasError = true
 			}
 		}
-		log.Printf("[WARN] Fallback ReadResource (import) for %s ID %s returned diagnostics: %s", typeName, id, strings.Join(errs, "; "))
-	}
-	if resp.NewState == nil || resp.NewState.Msgpack == nil {
-		return cty.NilVal, fmt.Errorf("fallback ReadResource (import) for %s ID %s returned no state", typeName, id)
+		if hasError {
+			return cty.NilVal, fmt.Errorf("import fallback for %s ID %s failed: %v", typeName, id, errs)
+		}
+		log.Printf("[WARN] Import fallback for %s ID %s returned warnings: %v", typeName, id, errs)
 	}
 
-	ctyVal, err := resp.NewState.UnmarshalToCTYValue(cty.DynamicPseudoType)
-	if err != nil {
-		return cty.NilVal, fmt.Errorf("failed to unmarshal NewState from fallback import for %s: %w", typeName, err)
+	// Check for empty state
+	if resp.NewState == nil || (len(resp.NewState.Msgpack) == 0 && len(resp.NewState.Json) == 0) {
+		return cty.NilVal, fmt.Errorf("import fallback for %s ID %s returned no state", typeName, id)
 	}
+
+	// Convert response to cty.Value
+	ctyVal, err := dynamicValueToCtyValue(resp.NewState, cty.DynamicPseudoType)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("failed to unmarshal state from import fallback for %s: %w", typeName, err)
+	}
+
+	log.Printf("[DEBUG] ProviderWrapper: Successfully imported resource %s ID %s", typeName, id)
 	return ctyVal, nil
 }
 
@@ -341,8 +459,8 @@ func (p *ProviderWrapper) initProvider(verbose bool) error {
 	p.client = plugin.NewClient(
 		&plugin.ClientConfig{
 			Cmd:              exec.Command(providerFilePath),
-			HandshakeConfig:  tfplugin6.Handshake,
-			VersionedPlugins: tfplugin6.VersionedPlugins,
+			HandshakeConfig:  Handshake,
+			VersionedPlugins: VersionedPlugins,
 			Managed:          true,
 			Logger:           logger,
 			AllowedProtocols: []plugin.Protocol{plugin.ProtocolGRPC},
@@ -354,9 +472,9 @@ func (p *ProviderWrapper) initProvider(verbose bool) error {
 		return fmt.Errorf("failed to get plugin client: %w", err)
 	}
 
-	raw, err := p.rpcClient.Dispense(tfprotov6.ProviderPluginName)
+	raw, err := p.rpcClient.Dispense("provider")
 	if err != nil {
-		return fmt.Errorf("failed to dispense provider_old plugin: %w", err)
+		return fmt.Errorf("failed to dispense provider plugin: %w", err)
 	}
 
 	var ok bool
@@ -366,45 +484,46 @@ func (p *ProviderWrapper) initProvider(verbose bool) error {
 	}
 	log.Println("[DEBUG] ProviderWrapper: Successfully dispensed tfplugin6.ProviderClient.")
 
-	schemaResp, err := p.ProviderClient.GetSchema(context.Background(), &tfprotov6.GetSchemaRequest{})
+	// Get schema to validate provider is working
+	schemaResp, err := p.ProviderClient.GetProviderSchema(context.Background(), &tfplugin6.GetProviderSchema_Request{})
 	if err != nil {
-		return fmt.Errorf("failed to get provider_old schema for configuration: %w", err)
+		return fmt.Errorf("failed to get provider schema for configuration: %w", err)
 	}
 	if schemaResp.Provider == nil || schemaResp.Provider.Block == nil {
-		return fmt.Errorf("provider_old schema or schema block is nil during configuration")
+		return fmt.Errorf("provider schema or schema block is nil during configuration")
 	}
 
-	var configDynamicValue *tfprotov6.DynamicValue
+	// Convert config to DynamicValue
+	var configDynamicValue *tfplugin6.DynamicValue
 	if !p.config.IsNull() && p.config.IsKnown() {
-		configDynamicValue, err = tfprotov6.NewDynamicValue(p.config.Type(), p.config)
+		configDynamicValue, err = ctyValueToDynamicValue(p.config, p.config.Type())
 		if err != nil {
-			return fmt.Errorf("failed to convert provider_old config cty.Value to DynamicValue: %w", err)
+			return fmt.Errorf("failed to convert provider config cty.Value to DynamicValue: %w", err)
 		}
 	} else {
-		emptyObjectType := tftypes.Object{}
-		configDynamicValue, _ = tfprotov6.NewDynamicValue(emptyObjectType, cty.NullVal(emptyObjectType))
-
-		log.Println("[DEBUG] ProviderWrapper: Provider config is null or unknown, using a null DynamicValue for configuration.")
+		configDynamicValue = &tfplugin6.DynamicValue{}
+		log.Println("[DEBUG] ProviderWrapper: Provider config is null or unknown, using empty DynamicValue.")
 	}
 
-	configureReq := &tfprotov6.ConfigureProviderRequest{
-		TerraformVersion: "0.15.0",
+	// Configure the provider
+	configureReq := &tfplugin6.ConfigureProvider_Request{
+		TerraformVersion: "1.5.0",
 		Config:           configDynamicValue,
 	}
 
-	log.Println("[DEBUG] ProviderWrapper: Configuring provider_old...")
-	configureResp, err := p.ProviderClient.Configure(context.Background(), configureReq)
+	log.Println("[DEBUG] ProviderWrapper: Configuring provider...")
+	configureResp, err := p.ProviderClient.ConfigureProvider(context.Background(), configureReq)
 	if err != nil {
 		p.client.Kill()
-		return fmt.Errorf("failed to configure provider_old: %w", err)
+		return fmt.Errorf("failed to configure provider: %w", err)
 	}
 
 	if configureResp.Diagnostics != nil && len(configureResp.Diagnostics) > 0 {
 		for _, diag := range configureResp.Diagnostics {
 			log.Printf("[%s] ProviderWrapper: Diagnostic from ConfigureProvider: %s: %s\n", diag.Severity, diag.Summary, diag.Detail)
-			if diag.Severity == tfprotov6.DiagnosticSeverityError {
+			if diag.Severity == tfplugin6.Diagnostic_ERROR {
 				p.client.Kill()
-				return fmt.Errorf("error configuring provider_old: %s - %s", diag.Summary, diag.Detail)
+				return fmt.Errorf("error configuring provider: %s - %s", diag.Summary, diag.Detail)
 			}
 		}
 	}
