@@ -17,11 +17,11 @@ package aws
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"strings"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/hashicorp/terraform/helper/hashcode"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -33,8 +33,16 @@ type EbsGenerator struct {
 	AWSService
 }
 
+// fnv1aHash generates a 32-bit FNV-1a hash of a string.
+func fnv1aHash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
+
 func (g *EbsGenerator) volumeAttachmentID(device, volumeID, instanceID string) string {
-	return fmt.Sprintf("vai-%d", hashcode.String(fmt.Sprintf("%s-%s-%s-", device, instanceID, volumeID)))
+	combinedString := fmt.Sprintf("%s-%s-%s-", device, instanceID, volumeID)
+	return fmt.Sprintf("vai-%d", fnv1aHash(combinedString))
 }
 
 func (g *EbsGenerator) InitResources() error {

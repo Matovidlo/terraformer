@@ -23,10 +23,9 @@ import (
 	"time"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
-	"github.com/hashicorp/terraform/helper/pathorcontents"
+	"github.com/mitchellh/go-homedir"
 	"golang.org/x/oauth2"
 	googleoauth "golang.org/x/oauth2/google"
-	"golang.org/x/oauth2/jwt"
 	"google.golang.org/api/gmail/v1"
 	"google.golang.org/api/option"
 )
@@ -43,10 +42,15 @@ type GmailfilterService struct { //nolint
 }
 
 func (s *GmailfilterService) gmailService(ctx context.Context) (*gmail.Service, error) {
-	creds := s.GetArgs()["credentials"].(string)
+	credsPathOrJSON := s.GetArgs()["credentials"].(string)
 	impersonatedEmailAddr := s.GetArgs()["impersonatedUserEmail"].(string)
 
-	tokenSource, err := s.getTokenSource(creds, impersonatedEmailAddr)
+	credsJSON, _, err := pathOrContentsIsFile(credsPathOrJSON)
+	if err != nil {
+		return nil, fmt.Errorf("error reading credentials: %w", err)
+	}
+
+	tokenSource, err := s.getTokenSource([]byte(credsJSON), impersonatedEmailAddr)
 	if err != nil {
 		return nil, err
 	}
@@ -61,41 +65,30 @@ func (s *GmailfilterService) gmailService(ctx context.Context) (*gmail.Service, 
 	return svc, nil
 }
 
-func (s *GmailfilterService) validateCredentials(creds string) error {
-	if _, err := os.Stat(creds); err == nil {
-		return nil
+func (s *GmailfilterService) validateCredentials(credsPathOrJSON string) error {
+	credsJSON, isFile, err := pathOrContentsIsFile(credsPathOrJSON)
+	if err != nil && isFile {
+		return err
 	}
-	if _, err := googleoauth.CredentialsFromJSON(context.Background(), []byte(creds)); err != nil {
-		return fmt.Errorf("JSON credentials in %q are not valid: %s", creds, err)
+
+	if _, err := googleoauth.CredentialsFromJSON(context.Background(), []byte(credsJSON), gmailAPIScopes...); err != nil {
+		if isFile {
+			return fmt.Errorf("JSON credentials in file %q are not valid: %w", credsPathOrJSON, err)
+		}
+		return fmt.Errorf("JSON credentials string is not valid: %w", err)
 	}
 	return nil
 }
 
-func (s *GmailfilterService) getTokenSource(creds string, impersonatedEmailAddr string) (oauth2.TokenSource, error) {
-	if creds != "" && impersonatedEmailAddr != "" {
-		if err := s.validateCredentials(creds); err != nil {
-			return nil, err
-		}
-		contents, _, err := pathorcontents.Read(creds)
+func (s *GmailfilterService) getTokenSource(credsJSON []byte, impersonatedEmailAddr string) (oauth2.TokenSource, error) {
+	if len(impersonatedEmailAddr) > 0 {
+		conf, err := googleoauth.JWTConfigFromJSON(credsJSON, gmailAPIScopes...)
 		if err != nil {
-			return nil, fmt.Errorf("Error loading credentials: %s", err)
-		}
-
-		var serviceAccount serviceAccountFile
-		if err := parseJSON(&serviceAccount, contents); err != nil {
-			return nil, fmt.Errorf("error parsing credentials %q: %s", contents, err)
-		}
-
-		conf := jwt.Config{
-			Email:      serviceAccount.ClientEmail,
-			PrivateKey: []byte(serviceAccount.PrivateKey),
-			Scopes:     gmailAPIScopes,
-			TokenURL:   "https://oauth2.googleapis.com/token",
+			return nil, fmt.Errorf("unable to parse JWT config from JSON: %w", err)
 		}
 		conf.Subject = impersonatedEmailAddr
 		return conf.TokenSource(context.Background()), nil
 	}
-
 	return googleoauth.DefaultTokenSource(context.Background(), gmailAPIScopes...)
 }
 
@@ -111,4 +104,29 @@ func parseJSON(result interface{}, contents string) error {
 	dec := json.NewDecoder(r)
 
 	return dec.Decode(result)
+}
+
+func pathOrContentsIsFile(poc string) (string, bool, error) {
+	if len(poc) == 0 {
+		return poc, false, nil
+	}
+
+	path := poc
+	if path[0] == '~' {
+		var err error
+		path, err = homedir.Expand(path)
+		if err != nil {
+			return path, true, fmt.Errorf("error expanding home directory for path %s: %w", poc, err)
+		}
+	}
+
+	if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return string(contents), true, fmt.Errorf("error reading file %s: %w", path, err)
+		}
+		return string(contents), true, nil
+	}
+
+	return poc, false, nil
 }

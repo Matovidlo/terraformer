@@ -25,7 +25,6 @@ import (
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/hashicorp/terraform/flatmap"
 	"gonum.org/v1/gonum/graph"
 	simplegraph "gonum.org/v1/gonum/graph/simple"
 	"gonum.org/v1/gonum/graph/topo"
@@ -107,7 +106,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -118,7 +117,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -137,7 +136,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, *groupPair.GroupId, rule),
 				"aws_security_group_rule",
 				"aws",
-				flatmap.Flatten(attributes),
+				attributes,
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -148,7 +147,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 			permissionID(*sg.GroupId, ruleType, "", rule),
 			"aws_security_group_rule",
 			"aws",
-			flatmap.Flatten(attributes),
+			attributes,
 			SgAllowEmptyValues,
 			map[string]interface{}{}))
 	}
