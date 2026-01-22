@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/fromproto"
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils/providerwrapper/internal/tfplugin6"
 	"github.com/hashicorp/go-cty/cty"
 	hclog "github.com/hashicorp/go-hclog"

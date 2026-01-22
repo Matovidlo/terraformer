@@ -92,6 +92,55 @@ I recommend **Option A** (vendor fromproto) because:
 3. Preserves existing architecture
 4. One-time effort
 
+### Implementation Progress
+
+**Completed** ✅:
+1. Vendored tfplugin6 package (3 files)
+2. Created plugin handshake configuration
+3. Implemented GRPCProviderPlugin for client-side gRPC
+4. Vendored fromproto package (12 files) for type conversions
+5. Updated import paths in vendored files to use our internal packages
+
+**Current Blockers** ⚠️:
+The provider wrapper has type system conflicts:
+1. **API Version Mismatch**: Code uses old `terraform.InstanceState`/`terraform.InstanceInfo` but those don't exist in new SDK
+2. **Value Type Conflicts**: Code uses `cty.Value` but new API uses `tftypes.Value`
+3. **Method Signature Changes**: `GetSchema()` → `GetProviderSchema()`, `UnmarshalToCTYValue()` removed
+4. **Conversion Complexity**: Need to convert between:
+   - `cty.Value` ↔ `tftypes.Value`
+   - `terraform.InstanceState` ↔ `tfprotov6` state types
+   - Old request/response types ↔ new gRPC types
+
+**Compilation Errors** (10+):
+- Missing fromproto response converters (only request converters exist)
+- cty.Value can't convert to DynamicValue (needs tftypes.Value)
+- Diagnostic severity type mismatches
+- Block/Attribute type incompatibilities
+
+### Next Steps
+
+Need to decide between:
+
+**A. Continue Current Approach** (More work, cleaner result)
+- Write cty ↔ tftypes conversion helpers
+- Update all provider wrapper methods to use new types
+- May uncover more issues as we go
+- Estimated: 20-30 more changes needed
+
+**B. Hybrid Approach** (Faster, more technical debt)
+- Keep using protobuf types internally in provider wrapper
+- Only convert at the boundary where terraformer uses it
+- Requires changing ProviderWrapper struct to use tfplugin6 types
+- Estimated: 10-15 changes needed
+
+**C. Parallel Rewrite** (Clean slate, most time)
+- Create new ProviderWrapperV2 alongside old one
+- Migrate consumers one by one
+- Can test both in parallel
+- Estimated: Full rewrite
+
+**Checkpoint**: Commit `fb9a3d76` - Vendored tfplugin6 and fromproto, facing type system conflicts
+
 ---
 
 ## Phase 2: State Management Migration (PENDING)
