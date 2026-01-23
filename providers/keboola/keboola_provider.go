@@ -17,8 +17,10 @@ package keboola
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type KeboolaProvider struct {
@@ -46,26 +48,55 @@ func (p *KeboolaProvider) GetName() string {
 	return "keboola"
 }
 
+func (p *KeboolaProvider) GetConfig() cty.Value {
+	// Extract hostname suffix from apiURL (e.g., "https://connection.keboola.com" -> "keboola.com")
+	hostnameSuffix := p.apiURL
+	// Remove protocol
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "https://")
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "http://")
+	// Remove "connection." prefix
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "connection.")
+	// Remove any trailing path or port
+	if idx := strings.Index(hostnameSuffix, "/"); idx != -1 {
+		hostnameSuffix = hostnameSuffix[:idx]
+	}
+	if idx := strings.Index(hostnameSuffix, ":"); idx != -1 {
+		hostnameSuffix = hostnameSuffix[:idx]
+	}
+
+	return cty.ObjectVal(map[string]cty.Value{
+		"hostname_suffix": cty.StringVal(hostnameSuffix),
+		"token":           cty.StringVal(p.apiKey),
+	})
+}
+
 func (p *KeboolaProvider) GetProviderData(arg ...string) map[string]interface{} {
+	// Extract hostname suffix from apiURL (e.g., "https://connection.keboola.com" -> "keboola.com")
+	hostnameSuffix := p.apiURL
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "https://")
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "http://")
+	hostnameSuffix = strings.TrimPrefix(hostnameSuffix, "connection.")
+	if idx := strings.Index(hostnameSuffix, "/"); idx != -1 {
+		hostnameSuffix = hostnameSuffix[:idx]
+	}
+	if idx := strings.Index(hostnameSuffix, ":"); idx != -1 {
+		hostnameSuffix = hostnameSuffix[:idx]
+	}
+
 	return map[string]interface{}{
 		"provider": map[string]interface{}{
 			"keboola": map[string]interface{}{
-				"host":  p.apiURL,
-				"token": p.apiKey,
+				"hostname_suffix": hostnameSuffix,
+				"token":           p.apiKey,
 			},
 		},
 	}
 }
 
 func (p KeboolaProvider) GetResourceConnections() map[string]map[string][]string {
-	return map[string]map[string][]string{
-		"component_configuration": {
-			"scheduler": []string{"id"},
-		},
-		"scheduler": {
-			"component_configuration": []string{"configuration_id"},
-		},
-	}
+	// Format: map[resource_type]map[target_resource_type][]string{source_attr, target_attr}
+	// For now, return empty map as we don't have cross-resource dependencies defined
+	return map[string]map[string][]string{}
 }
 
 func (p *KeboolaProvider) GetSupportedService() map[string]terraformutils.ServiceGenerator {

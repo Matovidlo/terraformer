@@ -36,7 +36,7 @@ func (g *ComponentConfigurationGenerator) InitResources() error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
 	defer cancel()
-	client, err := keboola.NewAuthorizedAPI(ctx, g.Args["token"].(string), g.Args["host"].(string))
+	client, err := keboola.NewAuthorizedAPI(ctx, g.Args["host"].(string), g.Args["token"].(string))
 	if err != nil {
 		return err
 	}

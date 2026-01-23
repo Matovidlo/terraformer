@@ -397,22 +397,15 @@ func (p *ProviderWrapper) Refresh(infoType string, currentId string, priorStateC
 func (p *ProviderWrapper) importResourceStateByID(typeName string, id string, resourceSchema *tfplugin6.Schema) (cty.Value, error) {
 	log.Printf("[DEBUG] ProviderWrapper: Attempting ImportResourceState for %s with ID %s", typeName, id)
 
-	// Create a simple state with just the ID
-	idOnlyStateVal := cty.ObjectVal(map[string]cty.Value{"id": cty.StringVal(id)})
-	idOnlyStateDV, err := ctyValueToDynamicValue(idOnlyStateVal, idOnlyStateVal.Type())
-	if err != nil {
-		return cty.NilVal, fmt.Errorf("failed to create ID-only state for %s: %w", typeName, err)
+	// Use the proper ImportResourceState RPC call
+	req := &tfplugin6.ImportResourceState_Request{
+		TypeName: typeName,
+		Id:       id,
 	}
 
-	// Try ReadResource with ID-only state
-	req := &tfplugin6.ReadResource_Request{
-		TypeName:     typeName,
-		CurrentState: idOnlyStateDV,
-	}
-
-	resp, err := p.ProviderClient.ReadResource(context.Background(), req)
+	resp, err := p.ProviderClient.ImportResourceState(context.Background(), req)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("import fallback ReadResource failed for %s ID %s: %w", typeName, id, err)
+		return cty.NilVal, fmt.Errorf("ImportResourceState RPC failed for %s ID %s: %w", typeName, id, err)
 	}
 
 	// Check for errors in diagnostics
@@ -426,20 +419,26 @@ func (p *ProviderWrapper) importResourceStateByID(typeName string, id string, re
 			}
 		}
 		if hasError {
-			return cty.NilVal, fmt.Errorf("import fallback for %s ID %s failed: %v", typeName, id, errs)
+			return cty.NilVal, fmt.Errorf("import for %s ID %s failed: %v", typeName, id, errs)
 		}
-		log.Printf("[WARN] Import fallback for %s ID %s returned warnings: %v", typeName, id, errs)
+		log.Printf("[WARN] Import for %s ID %s returned warnings: %v", typeName, id, errs)
 	}
 
-	// Check for empty state
-	if resp.NewState == nil || (len(resp.NewState.Msgpack) == 0 && len(resp.NewState.Json) == 0) {
-		return cty.NilVal, fmt.Errorf("import fallback for %s ID %s returned no state", typeName, id)
+	// ImportResourceState can return multiple imported resources (for cases like AWS security group rules)
+	// For now, just take the first one
+	if resp.ImportedResources == nil || len(resp.ImportedResources) == 0 {
+		return cty.NilVal, fmt.Errorf("import for %s ID %s returned no resources", typeName, id)
+	}
+
+	importedResource := resp.ImportedResources[0]
+	if importedResource.State == nil || (len(importedResource.State.Msgpack) == 0 && len(importedResource.State.Json) == 0) {
+		return cty.NilVal, fmt.Errorf("import for %s ID %s returned empty state", typeName, id)
 	}
 
 	// Convert response to cty.Value
-	ctyVal, err := dynamicValueToCtyValue(resp.NewState, cty.DynamicPseudoType)
+	ctyVal, err := dynamicValueToCtyValue(importedResource.State, cty.DynamicPseudoType)
 	if err != nil {
-		return cty.NilVal, fmt.Errorf("failed to unmarshal state from import fallback for %s: %w", typeName, err)
+		return cty.NilVal, fmt.Errorf("failed to unmarshal state from import for %s: %w", typeName, err)
 	}
 
 	log.Printf("[DEBUG] ProviderWrapper: Successfully imported resource %s ID %s", typeName, id)
