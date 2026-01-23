@@ -14,6 +14,8 @@
 
 package terraformutils
 
+import "strings"
+
 // InstanceInfo represents metadata about a resource instance.
 // This is a lightweight replacement for terraform.InstanceInfo from the old SDK.
 type InstanceInfo struct {
@@ -23,6 +25,24 @@ type InstanceInfo struct {
 	// Id is the unique identifier for this resource instance
 	// Format: "<type>.<name>" (e.g., "aws_instance.web_server")
 	Id string
+}
+
+// ResourceAddr provides backward compatibility with old terraform.InstanceInfo.ResourceAddress()
+type ResourceAddr struct {
+	Name string
+}
+
+// ResourceAddress extracts the resource name from the Id field
+// Id format: "<type>.<name>" (e.g., "aws_instance.web_server")
+// Returns ResourceAddr with Name field extracted
+func (i *InstanceInfo) ResourceAddress() ResourceAddr {
+	parts := strings.Split(i.Id, ".")
+	if len(parts) >= 2 {
+		// Return everything after first dot as the name
+		return ResourceAddr{Name: strings.Join(parts[1:], ".")}
+	}
+	// Fallback: return empty name
+	return ResourceAddr{Name: ""}
 }
 
 // InstanceState represents the state of a resource instance.

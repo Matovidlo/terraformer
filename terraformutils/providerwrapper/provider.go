@@ -121,7 +121,7 @@ func (p *ProviderWrapper) Kill() {
 }
 
 // getProviderSchemaResponse fetches and caches the provider schema (gRPC response)
-func (p *ProviderWrapper) getProviderSchemaResponse() (*tfplugin6.GetProviderSchema_Response, error) {
+func (p *ProviderWrapper) GetProviderSchemaResponse() (*tfplugin6.GetProviderSchema_Response, error) {
 	if p.cachedSchemaResp == nil {
 		log.Println("[DEBUG] ProviderWrapper: Fetching provider schema from provider")
 		if p.ProviderClient == nil {
@@ -148,7 +148,7 @@ func (p *ProviderWrapper) getProviderSchemaResponse() (*tfplugin6.GetProviderSch
 // GetSchema returns the provider schema (for backward compatibility)
 // Deprecated: Use getProviderSchemaResponse for new code
 func (p *ProviderWrapper) GetSchema() *tfprotov6.Schema {
-	resp, err := p.getProviderSchemaResponse()
+	resp, err := p.GetProviderSchemaResponse()
 	if err != nil {
 		log.Printf("[ERROR] ProviderWrapper: GetSchema failed: %v\n", err)
 		return nil
@@ -165,7 +165,7 @@ func (p *ProviderWrapper) GetSchema() *tfprotov6.Schema {
 
 // GetResourceSchema returns the schema for a specific resource type (gRPC version)
 func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string) (*tfplugin6.Schema, error) {
-	resp, err := p.getProviderSchemaResponse()
+	resp, err := p.GetProviderSchemaResponse()
 	if err != nil {
 		return nil, fmt.Errorf("get schema: %w", err)
 	}

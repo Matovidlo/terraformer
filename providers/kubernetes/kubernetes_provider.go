@@ -97,7 +97,11 @@ func (p *KubernetesProvider) GetSupportedService() map[string]terraformutils.Ser
 		log.Println(err)
 		return resources
 	}
-	resp := provider.GetSchema()
+	resp, err := provider.GetProviderSchemaResponse()
+	if err != nil {
+		log.Println(err)
+		return resources
+	}
 	for _, list := range lists {
 		if len(list.APIResources) == 0 {
 			continue
@@ -119,7 +123,7 @@ func (p *KubernetesProvider) GetSupportedService() map[string]terraformutils.Ser
 			}
 
 			// filter to resource that are supported by terraform kubernetes provider
-			if _, ok := resp.ResourceTypes[extractTfResourceName(resource.Kind)]; !ok {
+			if _, ok := resp.ResourceSchemas[extractTfResourceName(resource.Kind)]; !ok {
 				continue
 			}
 

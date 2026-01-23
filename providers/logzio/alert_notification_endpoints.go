@@ -19,7 +19,7 @@ import (
 
 	"github.com/GoogleCloudPlatform/terraformer/terraformutils"
 
-	logzclient "github.com/logzio/logzio_terraform_client"
+	"github.com/logzio/logzio_terraform_client/endpoints"
 )
 
 type AlertNotificationEndpointsGenerator struct {
@@ -28,19 +28,19 @@ type AlertNotificationEndpointsGenerator struct {
 
 // Generate Terraform Resources from Logzio API,
 func (g *AlertNotificationEndpointsGenerator) InitResources() error {
-	generalClient, err := logzclient.New(g.Args["api_token"].(string), g.Args["base_url"].(string))
+	client, err := endpoints.New(g.Args["api_token"].(string), g.Args["base_url"].(string))
 	if err != nil {
 		return err
 	}
 
-	logzioEndpoints, err := generalClient.Endpoints.ListEndpoints()
+	logzioEndpoints, err := client.ListEndpoints()
 	if err != nil {
 		return err
 	}
 	for _, endpoint := range logzioEndpoints {
 		g.Resources = append(g.Resources, terraformutils.NewSimpleResource(
-			strconv.FormatInt(endpoint.Id, 10),
-			createSlug(endpoint.Title+"-"+string(endpoint.EndpointType)+"-"+strconv.FormatInt(endpoint.Id, 10)),
+			strconv.FormatInt(int64(endpoint.Id), 10),
+			createSlug(endpoint.Title+"-"+endpoint.Type+"-"+strconv.FormatInt(int64(endpoint.Id), 10)),
 			"logzio_endpoint",
 			"logzio",
 			[]string{},

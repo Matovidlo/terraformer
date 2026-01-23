@@ -32,6 +32,27 @@ import (
 
 var SgAllowEmptyValues = []string{"tags."}
 
+// convertAttributesToStrings converts map[string]interface{} to map[string]string
+// for compatibility with terraformutils.NewResource
+func convertAttributesToStrings(attrs map[string]interface{}) map[string]string {
+	result := make(map[string]string)
+	for k, v := range attrs {
+		switch val := v.(type) {
+		case string:
+			result[k] = val
+		case bool:
+			result[k] = fmt.Sprintf("%t", val)
+		case int, int32, int64:
+			result[k] = fmt.Sprintf("%d", val)
+		case []string:
+			result[k] = strings.Join(val, ",")
+		default:
+			result[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	return result
+}
+
 type void struct{}
 
 var member void
@@ -106,7 +127,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				attributes,
+				convertAttributesToStrings(attributes),
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -117,7 +138,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, "", rule),
 				"aws_security_group_rule",
 				"aws",
-				attributes,
+				convertAttributesToStrings(attributes),
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -136,7 +157,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 				permissionID(*sg.GroupId, ruleType, *groupPair.GroupId, rule),
 				"aws_security_group_rule",
 				"aws",
-				attributes,
+				convertAttributesToStrings(attributes),
 				SgAllowEmptyValues,
 				map[string]interface{}{}))
 		}
@@ -147,7 +168,7 @@ func processRule(rule types.IpPermission, ruleType string, sg types.SecurityGrou
 			permissionID(*sg.GroupId, ruleType, "", rule),
 			"aws_security_group_rule",
 			"aws",
-			attributes,
+			convertAttributesToStrings(attributes),
 			SgAllowEmptyValues,
 			map[string]interface{}{}))
 	}
