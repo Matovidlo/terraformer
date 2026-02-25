@@ -175,9 +175,13 @@ func ctyValueToAttributes(val cty.Value) (map[string]string, error) {
 	if val.Type().IsObjectType() {
 		for key := range val.Type().AttributeTypes() {
 			attrVal := val.GetAttr(key)
-			if !attrVal.IsNull() && attrVal.Type() == cty.String {
+			// Skip null or unknown values
+			if attrVal.IsNull() || !attrVal.IsKnown() {
+				continue
+			}
+			if attrVal.Type() == cty.String {
 				attrs[key] = attrVal.AsString()
-			} else if !attrVal.IsNull() {
+			} else {
 				// For non-string types, convert to Go value and stringify
 				attrs[key] = fmt.Sprintf("%v", attrVal)
 			}

@@ -196,6 +196,8 @@ func (p *ProviderWrapper) GetResourceImpliedType(typeName string) (cty.Type, err
 		return cty.NilType, fmt.Errorf("convert schema to cty.Type for %s: %w", typeName, err)
 	}
 
+	log.Printf("[DEBUG] GetResourceImpliedType(%s): generated type with %d attributes", typeName, len(impliedType.AttributeTypes()))
+
 	return impliedType, nil
 }
 
@@ -449,8 +451,14 @@ func (p *ProviderWrapper) importResourceStateByID(typeName string, id string, re
 		return cty.NilVal, fmt.Errorf("import for %s ID %s returned empty state", typeName, id)
 	}
 
-	// Convert response to cty.Value
-	ctyVal, err := dynamicValueToCtyValue(importedResource.State, cty.DynamicPseudoType)
+	// Convert schema to cty.Type for proper msgpack decoding
+	impliedType, err := ConvertSchemaBlockToType(resourceSchema.Block)
+	if err != nil {
+		return cty.NilVal, fmt.Errorf("failed to convert schema for %s: %w", typeName, err)
+	}
+
+	// Convert response to cty.Value using the proper schema type
+	ctyVal, err := dynamicValueToCtyValue(importedResource.State, impliedType)
 	if err != nil {
 		return cty.NilVal, fmt.Errorf("failed to unmarshal state from import for %s: %w", typeName, err)
 	}
