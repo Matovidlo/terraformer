@@ -178,11 +178,25 @@ func (p *ProviderWrapper) GetResourceSchema(ctx context.Context, typeName string
 }
 
 // GetResourceImpliedType returns a cty.Type for a given resource type
-// This is a simplified implementation that creates a generic object type
+// This converts the provider's schema to a proper cty.Type for HCL generation
 func (p *ProviderWrapper) GetResourceImpliedType(typeName string) (cty.Type, error) {
-	// For now, return a generic object type with dynamic attributes
-	// TODO: Properly convert tfplugin6.Schema_Block to cty.Type with correct attribute types
-	return cty.DynamicPseudoType, nil
+	// Get the resource schema
+	schema, err := p.GetResourceSchema(context.Background(), typeName)
+	if err != nil {
+		return cty.NilType, fmt.Errorf("get schema for %s: %w", typeName, err)
+	}
+
+	if schema == nil || schema.Block == nil {
+		return cty.NilType, fmt.Errorf("schema or block is nil for %s", typeName)
+	}
+
+	// Convert schema block to cty.Type
+	impliedType, err := ConvertSchemaBlockToType(schema.Block)
+	if err != nil {
+		return cty.NilType, fmt.Errorf("convert schema to cty.Type for %s: %w", typeName, err)
+	}
+
+	return impliedType, nil
 }
 
 func (p *ProviderWrapper) GetReadOnlyAttributes(resourceTypes []string) (map[string][]string, error) {
