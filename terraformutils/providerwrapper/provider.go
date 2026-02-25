@@ -361,13 +361,18 @@ func (p *ProviderWrapper) Refresh(infoType string, currentId string, priorStateC
 	}
 
 	// Convert prior state to DynamicValue if provided
-	if !priorStateCty.IsNull() && priorStateCty.IsKnown() {
+	// Note: If priorState has unknown values (from ImportState), skip CurrentState
+	// and let the provider fetch fresh state from the API using just the ID
+	if !priorStateCty.IsNull() && priorStateCty.IsWhollyKnown() {
+		// Only pass CurrentState if all values are known (not from ImportState)
 		currentDV, err := ctyValueToDynamicValue(priorStateCty, priorStateCty.Type())
 		if err != nil {
 			log.Printf("[WARN] Failed to convert priorState for %s: %v. Proceeding without CurrentState.", infoType, err)
 		} else {
 			req.CurrentState = currentDV
 		}
+	} else {
+		log.Printf("[DEBUG] Skipping CurrentState for %s (has unknown values from ImportState)", infoType)
 	}
 
 	// Call gRPC ReadResource
