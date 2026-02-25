@@ -16,6 +16,7 @@ package keboola
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/keboola/keboola-sdk-go/v2/pkg/keboola"
@@ -55,13 +56,21 @@ func (g *ComponentConfigurationGenerator) InitResources() error {
 
 	for _, component := range *components {
 		for _, config := range component.Configs {
-			g.Resources = append(g.Resources, terraformutils.NewResource(
+			// Create compound import ID: branch_id/component_id/configuration_id
+			importID := fmt.Sprintf("%d/%s/%s",
+				branch.ID,
+				component.ID.String(),
 				config.ID.String(),
+			)
+
+			g.Resources = append(g.Resources, terraformutils.NewResource(
+				importID,
 				config.Name,
 				"keboola_component_configuration",
 				"keboola",
 				map[string]string{
 					"component_id": component.ID.String(),
+					"branch_id":    fmt.Sprintf("%d", branch.ID),
 				},
 				[]string{}, // Don't skip any attributes during import
 				map[string]interface{}{},
